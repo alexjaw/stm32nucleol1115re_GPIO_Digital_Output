@@ -3,7 +3,18 @@
   * file    main.c
   * author  A.Jaworowski
   *
-  * version 2
+  * version V1.2
+  * date	2015-01-15
+  * brief	Instead of blinking, fading LED, using timer outout compare and PWM.
+  * The whole idea is to run the led with short periods and control the
+  * duty cycle. The effect is that the LED looks as if dimmed.
+  * This is done by configuring alternate function (AF) for PA5 (crucial),
+  * see GPIO init structure.
+  * Observe1 no interrupts!
+  * Observe2 empty while (1){}
+  * - ref: http://visualgdb.com/tutorials/arm/stm32/pwm/
+  *
+  * version V1.1
   * date	2015-01-15
   * brief	Instead of Delay(), we enable a timer to do the same function.
   * What timer - see Datasheet and search for the port, example PA5, see also
@@ -30,68 +41,49 @@ RCC_ClocksTypeDef RCC_Clocks;
 
 int main(void)
 {
-	int16_t period = 500; //This is for the timer TIM
+	int16_t timerPrescaler = 3200; //CLK 32 MHz with prescaler 32000 -> timer clk = 1000 Hz
+	int16_t period = 100; //This is period for the timer TIM
+	int16_t dutyCycle = period/10;
 	TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStruct;
+	TIM_OCInitTypeDef TIM_OCInitStruct;
 
 	/* SysTick end of count event each 1ms */
-//	RCC_GetClocksFreq(&RCC_Clocks);
-//	SysTick_Config(RCC_Clocks.HCLK_Frequency / 1000);
+	RCC_GetClocksFreq(&RCC_Clocks);
+	SysTick_Config(RCC_Clocks.HCLK_Frequency / 1000);
 
-	//Enable timer TIM2 (for PA5)
-	//Timer freq = 1 Hz
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
-	TIM_DeInit(TIM2);
-	TIM_TimeBaseInitStruct.TIM_Prescaler = 32000;	//CLK = 32MHz, so our TIM CLK will run at 1000 Hz
-	TIM_TimeBaseInitStruct.TIM_Period = period-1;	//0..period-1. timer_clock/period = frequency
-	TIM_TimeBaseInitStruct.TIM_CounterMode = TIM_CounterMode_Up;
-	TIM_TimeBaseInitStruct.TIM_ClockDivision = 1;
-	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStruct);
-	TIM_Cmd(TIM2, ENABLE);
-	TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);		//Enable interrupts from TIM2
-
-	//Enable PA5
+	//Enable PA5 alternate function (AF), see Datasheet
 	RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA, ENABLE);
 	GPIO_InitTypeDef GPIO_InitStructure;
 	GPIO_StructInit (& GPIO_InitStructure);
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_2MHz;
 	GPIO_Init(GPIOA , &GPIO_InitStructure);
 
+	//Enable timer TIM2 (for PA5)
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+	TIM_DeInit(TIM2);
+	TIM_TimeBaseInitStruct.TIM_Prescaler = timerPrescaler;	//CLK = 32MHz, so our TIM CLK will run at 1000 Hz
+	TIM_TimeBaseInitStruct.TIM_Period = period-1;			//0..period-1. timer_clock/period = frequency
+	TIM_TimeBaseInitStruct.TIM_CounterMode = TIM_CounterMode_Up;
+	TIM_TimeBaseInitStruct.TIM_ClockDivision = 1;
+	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStruct);
+	//Enable timer
+	TIM_Cmd(TIM2, ENABLE);
+
+	//Configure timer TIM2 as an output compare timer, PWM mode
+	TIM_OCInitStruct.TIM_OCMode = TIM_OCMode_PWM1;
+	TIM_OCInitStruct.TIM_OutputState = TIM_OutputState_Enable;
+	TIM_OCInitStruct.TIM_Pulse = dutyCycle;
+	TIM_OCInitStruct.TIM_OCPolarity = TIM_OCPolarity_High;
+	TIM_OC1Init(TIM2, &TIM_OCInitStruct); //Observe that channel number is in the name
+	TIM_OC1PreloadConfig(TIM2, TIM_OCPreload_Enable);
+
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource5, GPIO_AF_TIM2);
+
   /* Infinite loop */
 	uint32_t timerValue;
-	while (1)
-	{
-		//Simplest alternative - manually check the timer
-		//Not perfect, it misses the periods fom time to time
-//		if (TIM_GetCounter(TIM2) == (period-1))
-//		{
-//			GPIO_ToggleBits(GPIOA, GPIO_Pin_5);
-//		}
-
-		//Better alternativ. Requires that interrupts are enabled for TIM2
-		//Much better behaviour of the blinking
-		//Next version: this code will be moved to an interrupt handler.
-	    if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET)
-	    {
-	        TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
-	        GPIO_ToggleBits(GPIOA, GPIO_Pin_5);
-	    }
-
-	  //Toggle PA5, ie pin 5 on port A
-	  //Pin 5 can be accessed with: 1<<5 or 0x20 = 0000 0000 0010 0000
-//	  GPIOA->ODR = GPIO_Pin_5; //same as 1<<5 or 0x20 = 0000 0000 0010 0000
-//	  Delay(500);
-//	  GPIOA->ODR = 0x0;
-//	  Delay(500);
-
-	  /* An alternative is to use BSRRx
-	   * - [0..15]  BSRRL Set
-	   * - [16..31] BSRRH Reset */
-//	  GPIOA->BSRRL = GPIO_Pin_5;
-//	  Delay(500);
-//	  GPIOA->BSRRH = GPIO_Pin_5;
-//	  Delay(500);
+	while (1) {//Everything handled by the timer}
   }
 }
 
